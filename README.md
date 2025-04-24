@@ -27,6 +27,9 @@ This study aims to systematically evaluate **OverlayFS, ZFS, Btrfs**, and also t
 git clone https://github.com/shahabafshar/Docker-FS-Benchmark.git
 cd Docker-FS-Benchmark
 
+# Provide the scripts with execution permission
+chmod +x ./scripts/*.sh
+
 # Install dependencies and setup monitoring
 ./scripts/setup.sh
 
@@ -36,6 +39,35 @@ cd Docker-FS-Benchmark
 # Analyze results
 ./scripts/analyze_results.sh
 ```
+
+## **Device Detection**
+
+The benchmark automatically detects storage devices during setup, but you can also manually scan for devices:
+
+```bash
+# Scan for available block devices and update configuration
+./scripts/run_benchmarks.sh --detect-devices
+```
+
+If you encounter device errors, verify your storage configuration:
+
+```bash
+# List all block devices
+lsblk -d
+
+# Check the current device configuration
+cat config/devices.conf
+
+# Run a specific device/filesystem combination
+./scripts/run_benchmarks.sh --device=/dev/sdX --fs=ext4
+```
+
+## **Troubleshooting**
+
+- **Device not found errors**: Edit `config/devices.conf` to match your system's actual devices
+- **ZFS errors**: Ensure ZFS module is loaded with `modprobe zfs`
+- **Permission errors**: Make sure you're running with root/sudo privileges
+- **Mount errors**: Verify no filesystems are already mounted at `/mnt/testdisk`
 
 ---
 

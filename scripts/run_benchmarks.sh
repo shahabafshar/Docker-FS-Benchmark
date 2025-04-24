@@ -30,8 +30,14 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-# Source system disk to avoid formatting it
-source "$CONFIG_FILE"
+# Properly parse the system disk from config file
+SYSTEM_DISK=$(grep "^SYSTEM_DISK=" "$CONFIG_FILE" | cut -d= -f2)
+if [ -z "$SYSTEM_DISK" ]; then
+    echo "Warning: SYSTEM_DISK not defined in config file. Using /dev/sdc as default."
+    SYSTEM_DISK="/dev/sdc"
+fi
+
+echo "System disk set to: $SYSTEM_DISK"
 
 # Ensure docker-compose is installed
 if ! command -v docker-compose &> /dev/null; then
@@ -47,16 +53,68 @@ mkdir -p "$RESULTS_DIR/processed"
 # List of filesystems to test
 FILESYSTEMS=("ext4" "xfs" "btrfs" "zfs")
 
-# Function to get device list from config
+# Function to verify device exists
+verify_device() {
+    local device=$1
+    if [ ! -b "$device" ]; then
+        echo "Warning: Device $device does not exist or is not a block device."
+        return 1
+    fi
+    return 0
+}
+
+# Function to get device list from config and verify they exist
 get_devices() {
     local device_type=$1
-    grep "^/dev/.*,$device_type," "$CONFIG_FILE" | cut -d',' -f1
+    local devices=()
+    
+    # Extract devices of the specified type from config file
+    while IFS= read -r line; do
+        # Skip comments and empty lines
+        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+        
+        # Skip the SYSTEM_DISK line
+        [[ "$line" =~ ^SYSTEM_DISK= ]] && continue
+        
+        # Parse device entries
+        if [[ "$line" =~ ^/dev/.*,$device_type, ]]; then
+            device=$(echo "$line" | cut -d',' -f1)
+            
+            # Verify device exists
+            if verify_device "$device"; then
+                devices+=("$device")
+                echo "Found $device_type device: $device"
+            else
+                echo "Skipping non-existent device: $device"
+            fi
+        fi
+    done < "$CONFIG_FILE"
+    
+    # Check if any devices were found
+    if [ ${#devices[@]} -eq 0 ]; then
+        echo "No valid $device_type devices found in configuration."
+        return 1
+    fi
+    
+    # Return devices as space-separated string
+    echo "${devices[@]}"
+    return 0
 }
 
 # Function to get device nice name from config
 get_device_name() {
     local device=$1
-    grep "^$device," "$CONFIG_FILE" | cut -d',' -f3
+    local name
+    
+    # Try to find the device in the config file
+    name=$(grep "^$device," "$CONFIG_FILE" | cut -d',' -f3)
+    
+    # If not found in config, use the device basename as fallback
+    if [ -z "$name" ]; then
+        name=$(basename "$device")
+    fi
+    
+    echo "$name"
 }
 
 # Function to prepare results directory for a specific run
@@ -134,11 +192,25 @@ run_benchmark() {
     # Format and mount the device
     "$SCRIPT_DIR/format_devices.sh" --device="$device" --fs="$fs"
     
+    # Check if format and mount was successful
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to format or mount device $device with filesystem $fs"
+        return 1
+    fi
+    
+    # Verify the mount point exists and is accessible
+    if [ ! -d "$mount_point" ]; then
+        echo "Error: Mount point $mount_point does not exist"
+        return 1
+    fi
+    
     # Start monitoring
     start_monitoring
     
     # Record filesystem info
-    df -h "$mount_point" > "$result_dir/filesystem_info.txt"
+    if ! df -h "$mount_point" > "$result_dir/filesystem_info.txt" 2>&1; then
+        echo "Warning: Could not record filesystem info for $mount_point"
+    fi
     
     # Run I/O benchmarks
     echo "Running I/O benchmarks..."
@@ -195,7 +267,7 @@ EOF
             -e TARGET_DIR=/data \
             -e OUTPUT_DIR=/data/results \
             --name benchmark_ml \
-            tensorflow/tensorflow:latest-gpu \
+            tensorflow/tensorflow:latest \
             python -c "
 import tensorflow as tf
 import time
@@ -251,6 +323,81 @@ with open(os.environ.get('OUTPUT_DIR') + '/ml_benchmark.txt', 'w') as f:
     echo "=== Benchmark for $device with $fs complete ==="
 }
 
+# Function to detect available storage devices
+detect_storage_devices() {
+    echo "Detecting available storage devices..."
+    
+    # Get a list of block devices
+    local block_devices=$(lsblk -d -o NAME,TYPE,SIZE | grep disk | awk '{print $1}')
+    
+    if [ -z "$block_devices" ]; then
+        echo "No block devices found. This is unusual and may indicate a problem."
+        return 1
+    fi
+    
+    echo "Found the following block devices:"
+    lsblk -d -o NAME,TYPE,SIZE,MODEL | grep disk
+    
+    # Create a new devices.conf if the user confirms
+    echo ""
+    echo "Would you like to generate a new devices.conf file with these devices? (y/n)"
+    read -r answer
+    
+    if [[ "$answer" =~ ^[Yy]$ ]]; then
+        local new_config="$CONFIG_DIR/devices.conf.new"
+        
+        # Start with a header
+        cat > "$new_config" << 'EOF'
+# Define devices to test
+# Format: device_path,device_type,device_name
+
+# Block devices detected on the system
+EOF
+        
+        # Add each detected block device
+        for dev in $block_devices; do
+            # Skip if it's the system disk
+            if [ "/dev/$dev" == "$SYSTEM_DISK" ]; then
+                continue
+            fi
+            
+            # Try to determine device type based on name
+            local dev_type="disk"
+            if [[ "$dev" == nvme* ]]; then
+                dev_type="nvme"
+            elif [[ "$dev" == sd* ]]; then
+                # Check if it's an SSD or HDD
+                if [ -e "/sys/block/$dev/queue/rotational" ]; then
+                    if [ "$(cat /sys/block/$dev/queue/rotational)" == "0" ]; then
+                        dev_type="ssd"
+                    else
+                        dev_type="hdd"
+                    fi
+                fi
+            fi
+            
+            echo "/dev/$dev,$dev_type,${dev_type}_$dev" >> "$new_config"
+        done
+        
+        # Add system disk entry
+        echo "" >> "$new_config"
+        echo "# Set this to your system disk to avoid testing it" >> "$new_config"
+        echo "SYSTEM_DISK=$SYSTEM_DISK" >> "$new_config"
+        
+        # Offer to replace the old config
+        echo "New configuration created at $new_config"
+        echo "Would you like to use this new configuration? (y/n)"
+        read -r answer
+        
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+            mv "$new_config" "$CONFIG_FILE"
+            echo "Configuration updated."
+        else
+            echo "Keeping existing configuration."
+        fi
+    fi
+}
+
 # Function to run all benchmarks for all devices and filesystems
 run_all_benchmarks() {
     echo "=== Starting full benchmark suite ==="
@@ -269,10 +416,13 @@ run_all_benchmarks() {
         echo "Testing $device_type devices..."
         
         # Get devices of this type
-        devices=$(get_devices "$device_type")
+        devices=$(get_devices "$device_type") || continue
+        
+        # Convert space-separated list to array
+        read -ra device_array <<< "$devices"
         
         # Loop through devices
-        for device in $devices; do
+        for device in "${device_array[@]}"; do
             # Skip system disk
             if [ "$device" == "$SYSTEM_DISK" ]; then
                 echo "Skipping system disk $device"
@@ -303,8 +453,10 @@ run_specific_benchmark() {
     local fs=$2
     
     # Validate device
-    if [ ! -b "$device" ]; then
+    if ! verify_device "$device"; then
         echo "Error: Device $device does not exist or is not a block device."
+        echo "Available block devices:"
+        lsblk -d -o NAME,TYPE,SIZE,MODEL | grep disk
         exit 1
     fi
     
@@ -334,15 +486,18 @@ usage() {
     echo "Options:"
     echo "  --device=DEVICE        Specific device to test (e.g., /dev/sda)"
     echo "  --fs=FILESYSTEM        Specific filesystem to test (ext4, xfs, btrfs, zfs)"
+    echo "  --detect-devices       Scan for available storage devices and offer to update config"
     echo "  --help                 Display this help message"
     echo ""
     echo "Example: $0 --device=/dev/sde --fs=btrfs"
+    echo "         $0 --detect-devices"
     echo "         $0              # Run all benchmarks"
 }
 
 # Parse command line arguments
 SPECIFIC_DEVICE=""
 SPECIFIC_FS=""
+DETECT_DEVICES=false
 
 for arg in "$@"; do
     case $arg in
@@ -351,6 +506,9 @@ for arg in "$@"; do
         ;;
         --fs=*)
         SPECIFIC_FS="${arg#*=}"
+        ;;
+        --detect-devices)
+        DETECT_DEVICES=true
         ;;
         --help)
         usage
@@ -365,7 +523,9 @@ for arg in "$@"; do
 done
 
 # Main execution
-if [ -n "$SPECIFIC_DEVICE" ] && [ -n "$SPECIFIC_FS" ]; then
+if [ "$DETECT_DEVICES" = true ]; then
+    detect_storage_devices
+elif [ -n "$SPECIFIC_DEVICE" ] && [ -n "$SPECIFIC_FS" ]; then
     # Run benchmark for specific device and filesystem
     run_specific_benchmark "$SPECIFIC_DEVICE" "$SPECIFIC_FS"
 else

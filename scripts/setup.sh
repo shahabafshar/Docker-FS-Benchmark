@@ -75,28 +75,102 @@ pip3 install \
     numpy \
     scipy
 
-# Create default config file
-echo "Creating default configuration..."
+# Create default config file and detect existing devices
+echo "Creating configuration and detecting storage devices..."
 mkdir -p config
-cat > config/devices.conf << 'EOF'
+
+# Create a temporary devices.conf file
+cat > config/devices.conf.temp << 'EOF'
 # Define devices to test
 # Format: device_path,device_type,device_name
 
-# HDDs
-/dev/sda,hdd,hdd1
-/dev/sdb,hdd,hdd2
+# This file contains placeholder device entries
+# Use the auto-detection feature to populate with real devices:
+# ./scripts/run_benchmarks.sh --detect-devices
 
-# SSDs 
-/dev/sde,ssd,ssd1
-/dev/sdf,ssd,ssd2
-
-# NVMe
-/dev/nvme0n1,nvme,nvme1
-/dev/nvme1n1,nvme,nvme2
+# Example entries:
+# /dev/sda,hdd,hdd1
+# /dev/sdb,hdd,hdd2
+# /dev/sde,ssd,ssd1
+# /dev/nvme0n1,nvme,nvme1
 
 # Set this to your system disk to avoid testing it
-SYSTEM_DISK=/dev/sdc
+# Try to detect system disk from root mount
+SYSTEM_DISK=$(df / | grep -v Filesystem | awk '{print $1}' | sed 's/[0-9]*$//')
+if [ -z "$SYSTEM_DISK" ]; then
+    # Fallback to first disk if detection fails
+    SYSTEM_DISK=/dev/sda
+fi
 EOF
+
+# Try to detect block devices
+echo "Attempting to detect block devices..."
+if command -v lsblk &> /dev/null; then
+    # Get a list of block devices
+    block_devices=$(lsblk -d -o NAME,TYPE,SIZE | grep disk | awk '{print $1}')
+    
+    if [ -n "$block_devices" ]; then
+        echo "Found block devices: $block_devices"
+        cat > config/devices.conf << 'EOF'
+# Define devices to test
+# Format: device_path,device_type,device_name
+
+# Block devices detected on this system:
+EOF
+        
+        # Identify system disk (use a heuristic - typically the smallest disk or the one with the most mounts)
+        system_disk="sda"  # Default fallback
+        if [ -f "/etc/fstab" ]; then
+            # Try to identify system disk from fstab root mount
+            root_dev=$(grep -E '\s/\s' /etc/fstab | grep -v '^#' | awk '{print $1}')
+            if [[ "$root_dev" =~ /dev/([a-z0-9]+) ]]; then
+                system_disk="${BASH_REMATCH[1]}"
+                echo "Detected system disk as /dev/$system_disk based on root mount"
+            fi
+        fi
+        
+        # Add each detected block device
+        for dev in $block_devices; do
+            # Try to determine device type based on name
+            dev_type="disk"
+            if [[ "$dev" == nvme* ]]; then
+                dev_type="nvme"
+            elif [[ "$dev" == sd* ]]; then
+                # Check if it's an SSD or HDD
+                if [ -e "/sys/block/$dev/queue/rotational" ]; then
+                    if [ "$(cat /sys/block/$dev/queue/rotational)" == "0" ]; then
+                        dev_type="ssd"
+                    else
+                        dev_type="hdd"
+                    fi
+                fi
+            fi
+            
+            # Skip if it's likely the system disk
+            if [[ "$dev" == "$system_disk"* ]]; then
+                echo "Skipping likely system disk: /dev/$dev"
+                continue
+            fi
+            
+            echo "/dev/$dev,$dev_type,${dev_type}_$dev" >> config/devices.conf
+        done
+        
+        # Add system disk entry
+        echo "" >> config/devices.conf
+        echo "# Set this to your system disk to avoid testing it" >> config/devices.conf
+        echo "SYSTEM_DISK=/dev/$system_disk" >> config/devices.conf
+        
+        echo "Created devices.conf with detected devices"
+    else
+        # Use the template if no devices were found
+        mv config/devices.conf.temp config/devices.conf
+        echo "No block devices detected. Using template devices.conf"
+    fi
+else
+    # Use the template if lsblk is not available
+    mv config/devices.conf.temp config/devices.conf
+    echo "lsblk not available. Using template devices.conf"
+fi
 
 # Pull Docker images
 echo "Pulling necessary Docker images..."
