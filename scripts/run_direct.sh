@@ -29,15 +29,68 @@ mkdir -p "$RESULTS_DIR/processed"
 # List of filesystems to test
 FILESYSTEMS=("ext4" "xfs" "btrfs" "zfs")
 
-# Function to verify device exists
+# Function to verify device exists or create a loop device if needed
 verify_device() {
     local device=$1
-    if [ ! -b "$device" ]; then
-        echo "Error: Device $device does not exist or is not a block device."
-        lsblk -d
-        return 1
+    
+    # Check if it's an existing block device
+    if [ -b "$device" ]; then
+        echo "Using existing block device: $device"
+        return 0
     fi
-    return 0
+    
+    # Check if it's a regular file (for loop devices)
+    if [ -f "$device" ]; then
+        echo "Using file as loop device: $device"
+        
+        # Setup loop device
+        LOOP_DEV=$(losetup -f)
+        if losetup "$LOOP_DEV" "$device"; then
+            echo "Created loop device $LOOP_DEV using $device"
+            # Return the loop device instead
+            echo "$LOOP_DEV"
+            return 0
+        else
+            echo "Failed to create loop device for $device"
+            return 1
+        fi
+    fi
+    
+    # If it's a path but not a file yet, create a sparse file
+    if [[ "$device" == /* && ! -e "$device" ]]; then
+        echo "Creating sparse file for loop device: $device"
+        
+        # Get the directory path
+        DIR_PATH=$(dirname "$device")
+        
+        # Check if directory exists
+        if [ ! -d "$DIR_PATH" ]; then
+            echo "Directory $DIR_PATH does not exist. Creating..."
+            mkdir -p "$DIR_PATH" || return 1
+        fi
+        
+        # Create a 1GB sparse file
+        dd if=/dev/zero of="$device" bs=1 count=0 seek=1G
+        
+        # Setup loop device
+        LOOP_DEV=$(losetup -f)
+        if losetup "$LOOP_DEV" "$device"; then
+            echo "Created loop device $LOOP_DEV using new file $device"
+            # Return the loop device instead
+            echo "$LOOP_DEV"
+            return 0
+        else
+            echo "Failed to create loop device for new file $device"
+            rm -f "$device"
+            return 1
+        fi
+    fi
+    
+    echo "Error: $device does not exist or is not a block device."
+    echo "Available block devices:"
+    lsblk -d
+    echo "Tip: To create a test loop device, specify a path like /tmp/testfile"
+    return 1
 }
 
 # Function to prepare results directory for a specific run
@@ -183,11 +236,23 @@ if [ -z "$DEVICE" ] || [ -z "$FILESYSTEM" ]; then
     exit 1
 fi
 
-# Check device
-if ! verify_device "$DEVICE"; then
-    echo "Device verification failed. Available devices:"
-    lsblk -d
-    exit 1
+# Check device and setup loop device if needed
+DEVICE_TO_USE="$DEVICE"
+LOOP_CREATED=false
+
+LOOP_DEV=$(verify_device "$DEVICE")
+if [ $? -eq 0 ] && [ "$LOOP_DEV" != "0" ] && [ -n "$LOOP_DEV" ]; then
+    # If a loop device was created, use that instead
+    if [[ "$LOOP_DEV" == /dev/loop* ]]; then
+        echo "Using loop device $LOOP_DEV instead of $DEVICE"
+        DEVICE_TO_USE="$LOOP_DEV"
+        LOOP_CREATED=true
+    fi
+else
+    # If verification failed, exit
+    if [ $? -ne 0 ]; then
+        exit 1
+    fi
 fi
 
 # Check filesystem
@@ -204,8 +269,15 @@ docker build -t docker-benchmark .
 popd > /dev/null
 
 # Run benchmark
-result_dir=$(prepare_result_dir "$DEVICE" "$FILESYSTEM")
-run_direct_benchmark "$DEVICE" "$FILESYSTEM" "$result_dir"
+result_dir=$(prepare_result_dir "$DEVICE_TO_USE" "$FILESYSTEM")
+run_direct_benchmark "$DEVICE_TO_USE" "$FILESYSTEM" "$result_dir"
 
 echo "Direct benchmarks completed: $(date)"
-echo "Results saved to: $result_dir" 
+echo "Results saved to: $result_dir"
+
+# Cleanup loop device if we created one
+if [ "$LOOP_CREATED" = true ]; then
+    echo "Cleaning up loop device $DEVICE_TO_USE..."
+    losetup -d "$DEVICE_TO_USE" || true
+    echo "Loop device released."
+fi 

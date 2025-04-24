@@ -174,14 +174,20 @@ stop_monitoring() {
 run_idle_baseline() {
     echo "Running idle state baseline for 15 minutes..."
     
-    # Start monitoring
-    start_monitoring
-    
-    # Sleep for 15 minutes
-    sleep 900
-    
-    # Stop monitoring
-    stop_monitoring
+    # Skip the wait if in debug mode
+    if [ "$DEBUG_MODE" = true ]; then
+        echo "DEBUG MODE: Skipping 15-minute wait"
+        sleep 5  # Just wait 5 seconds for demonstration
+    else
+        # Start monitoring
+        start_monitoring
+        
+        # Sleep for 15 minutes
+        sleep 900
+        
+        # Stop monitoring
+        stop_monitoring
+    fi
     
     echo "Idle state baseline complete."
 }
@@ -493,10 +499,12 @@ usage() {
     echo "  --device=DEVICE        Specific device to test (e.g., /dev/sda)"
     echo "  --fs=FILESYSTEM        Specific filesystem to test (ext4, xfs, btrfs, zfs)"
     echo "  --detect-devices       Scan for available storage devices and offer to update config"
+    echo "  --debug                Run in debug mode (skip waits, print more info)"
     echo "  --help                 Display this help message"
     echo ""
     echo "Example: $0 --device=/dev/sde --fs=btrfs"
     echo "         $0 --detect-devices"
+    echo "         $0 --debug --device=/dev/sda --fs=ext4"
     echo "         $0              # Run all benchmarks"
 }
 
@@ -504,6 +512,7 @@ usage() {
 SPECIFIC_DEVICE=""
 SPECIFIC_FS=""
 DETECT_DEVICES=false
+DEBUG_MODE=false
 
 for arg in "$@"; do
     case $arg in
@@ -515,6 +524,10 @@ for arg in "$@"; do
         ;;
         --detect-devices)
         DETECT_DEVICES=true
+        ;;
+        --debug)
+        DEBUG_MODE=true
+        echo "DEBUG MODE ENABLED - Will skip long waits and show more information"
         ;;
         --help)
         usage
