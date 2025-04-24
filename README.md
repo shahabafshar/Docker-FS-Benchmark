@@ -24,8 +24,8 @@ This study aims to systematically evaluate **OverlayFS, ZFS, Btrfs**, and also t
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/docker-filesystem-benchmark.git
-cd docker-filesystem-benchmark
+git clone https://github.com/shahabafshar/Docker-FS-Benchmark.git
+cd Docker-FS-Benchmark
 
 # Install dependencies and setup monitoring
 ./scripts/setup.sh
@@ -193,6 +193,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## **Authors**
 
-- Your Name - Initial work
+- Shahab Afshar - Initial work
 
-For questions or contributions, please open an issue or contact [your@email.com]
+For questions or contributions, please open an issue or PR on the [GitHub repository](https://github.com/shahabafshar/Docker-FS-Benchmark)
