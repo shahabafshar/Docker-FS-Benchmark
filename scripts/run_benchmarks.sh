@@ -30,11 +30,17 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-# Properly parse the system disk from config file
-SYSTEM_DISK=$(grep "^SYSTEM_DISK=" "$CONFIG_FILE" | cut -d= -f2)
+# Function to safely read the SYSTEM_DISK from config
+get_system_disk() {
+    # Extract only the line that defines SYSTEM_DISK
+    grep -E "^SYSTEM_DISK=" "$CONFIG_FILE" | cut -d= -f2 || echo "/dev/sda"
+}
+
+# Get system disk without sourcing the file
+SYSTEM_DISK=$(get_system_disk)
 if [ -z "$SYSTEM_DISK" ]; then
-    echo "Warning: SYSTEM_DISK not defined in config file. Using /dev/sdc as default."
-    SYSTEM_DISK="/dev/sdc"
+    echo "Warning: SYSTEM_DISK not defined in config file. Using /dev/sda as default."
+    SYSTEM_DISK="/dev/sda"
 fi
 
 echo "System disk set to: $SYSTEM_DISK"
