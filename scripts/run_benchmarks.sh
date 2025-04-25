@@ -71,6 +71,8 @@ verify_device() {
 
 # Function to get device list from config and verify they exist
 get_devices() {
+    echo "DEBUG: Starting get_devices function"
+    
     local device_type=$1
     local devices=()
     
@@ -453,7 +455,18 @@ run_all_benchmarks() {
     for device_type in "hdd" "ssd" "nvme"; do
         echo "Testing $device_type devices..."
         
-        # Get devices of this type
+        # Get devices of this type 
+
+        devices=$(get_devices "$device_type")
+        status=$?
+        echo "^^^ status: $status"
+        echo "^^^ devices: $devices"
+        if [ $status -ne 0 ] || [ -z "$devices" ]; then
+            echo "Warning: No $device_type devices found or error getting devices"
+            continue
+        fi
+
+
         echo "Querying devices of type: $device_type"
         if ! devices=$(get_devices "$device_type"); then
             echo "Warning: No $device_type devices found or error getting devices"
