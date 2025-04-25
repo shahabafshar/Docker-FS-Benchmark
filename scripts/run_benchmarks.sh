@@ -428,10 +428,24 @@ run_all_benchmarks() {
         echo "Testing $device_type devices..."
         
         # Get devices of this type
-        devices=$(get_devices "$device_type") || continue
+        echo "Querying devices of type: $device_type"
+        if ! devices=$(get_devices "$device_type"); then
+            echo "Warning: No $device_type devices found or error getting devices"
+            continue
+        fi
+        
+        if [ "$DEBUG_MODE" = true ]; then
+            echo "DEBUG: Raw devices list for $device_type: $devices"
+        fi
         
         # Convert space-separated list to array
         read -ra device_array <<< "$devices"
+        
+        if [ "$DEBUG_MODE" = true ]; then
+            echo "DEBUG: Number of $device_type devices found: ${#device_array[@]}"
+            echo "DEBUG: Device array contents:"
+            printf "DEBUG: - %s\n" "${device_array[@]}"
+        fi
         
         # Loop through devices
         for device in "${device_array[@]}"; do
