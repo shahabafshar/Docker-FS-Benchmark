@@ -74,32 +74,58 @@ get_devices() {
     local device_type=$1
     local devices=()
     
+    if [ "$DEBUG_MODE" = true ]; then
+        echo "DEBUG: Starting device search for type: $device_type"
+        echo "DEBUG: Reading from config file: $CONFIG_FILE"
+    fi
+    
     # Extract devices of the specified type from config file
     while IFS= read -r line; do
+        if [ "$DEBUG_MODE" = true ]; then
+            echo "DEBUG: Processing line: $line"
+        fi
+        
         # Skip comments and empty lines
-        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+        if [[ "$line" =~ ^#.*$ || -z "$line" ]]; then
+            [ "$DEBUG_MODE" = true ] && echo "DEBUG: Skipping comment/empty line"
+            continue
+        fi
         
         # Skip the SYSTEM_DISK line
-        [[ "$line" =~ ^SYSTEM_DISK= ]] && continue
+        if [[ "$line" =~ ^SYSTEM_DISK= ]]; then
+            [ "$DEBUG_MODE" = true ] && echo "DEBUG: Skipping SYSTEM_DISK line"
+            continue
+        fi
         
         # Parse device entries
         if [[ "$line" =~ ^/dev/.*,$device_type, ]]; then
             device=$(echo "$line" | cut -d',' -f1)
+            [ "$DEBUG_MODE" = true ] && echo "DEBUG: Found matching device entry: $device"
             
             # Verify device exists
             if verify_device "$device"; then
                 devices+=("$device")
                 echo "Found $device_type device: $device"
+                [ "$DEBUG_MODE" = true ] && echo "DEBUG: Device verified and added to list"
             else
                 echo "Skipping non-existent device: $device"
+                [ "$DEBUG_MODE" = true ] && echo "DEBUG: Device verification failed"
             fi
+        else
+            [ "$DEBUG_MODE" = true ] && echo "DEBUG: Line does not match device type $device_type"
         fi
     done < "$CONFIG_FILE"
     
     # Check if any devices were found
     if [ ${#devices[@]} -eq 0 ]; then
         echo "No valid $device_type devices found in configuration."
+        [ "$DEBUG_MODE" = true ] && echo "DEBUG: Empty device list, returning error"
         return 1
+    fi
+    
+    if [ "$DEBUG_MODE" = true ]; then
+        echo "DEBUG: Found ${#devices[@]} devices of type $device_type"
+        echo "DEBUG: Device list: ${devices[*]}"
     fi
     
     # Return devices as space-separated string
