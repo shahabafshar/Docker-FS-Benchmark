@@ -1,0 +1,73 @@
+# Benchmark Results
+results/
+*.log
+*.dat
+*.csv
+*.json
+*.txt
+*.img
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# OS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor/IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Temporary benchmark files
+/tmp/
+.temp/
+
+# Loop device files
+/tmp/testdisk
+/tmp/testfile*
+
+# Exclude sensitive config files
+config/local_settings.conf
+
+# Keep these directories but not their contents
+!results/.gitkeep
+!tmp/.gitkeep
+
+# Python virtual environment
+.venv/ 

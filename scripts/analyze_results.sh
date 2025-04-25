@@ -14,12 +14,13 @@ RESULTS_DIR="$BASE_DIR/results"
 PROCESSED_DIR="$RESULTS_DIR/processed"
 VIZ_DIR="$RESULTS_DIR/visualizations"
 
-# Check if Python is available
-if ! command -v python3 &> /dev/null; then
-    echo "Error: Python 3 is required for analysis."
-    echo "Please install Python 3 first."
+# Activate the virtual environment
+echo "Activating Python virtual environment..."
+source "$SCRIPT_DIR/activate_venv.sh" || {
+    echo "ERROR: Failed to activate virtual environment."
+    echo "Please run setup.sh first to create the virtual environment."
     exit 1
-fi
+}
 
 # Ensure directories exist
 mkdir -p "$PROCESSED_DIR"
@@ -670,8 +671,11 @@ EOF
 chmod +x "$SCRIPT_DIR/analyze.py"
 
 # Run the analysis script
-echo "Running analysis script..."
-python3 "$SCRIPT_DIR/analyze.py" "$RESULTS_DIR" "$PROCESSED_DIR" "$VIZ_DIR"
+echo "Running analysis script with the virtual environment..."
+python "$SCRIPT_DIR/analyze.py" "$RESULTS_DIR" "$PROCESSED_DIR" "$VIZ_DIR"
+
+# Deactivate the virtual environment when done
+deactivate
 
 echo "=== Analysis Complete! ==="
 echo "Results have been processed and visualized."

@@ -65,15 +65,80 @@ else
     echo "- System monitoring (sysstat)"
 fi
 
-# Install Python dependencies
-echo "Installing Python dependencies..."
-pip3 install \
+# Install Python dependencies in a virtual environment
+echo "Setting up Python virtual environment..."
+if [ -d ".venv" ]; then
+    echo "Virtual environment already exists. Updating..."
+else
+    echo "Creating new virtual environment..."
+    python3 -m venv .venv || {
+        echo "Failed to create virtual environment. Trying with venv module installation..."
+        if [ "$OS" == "ubuntu" ] || [ "$OS" == "debian" ]; then
+            apt-get install -y python3-venv
+        elif [ "$OS" == "centos" ] || [ "$OS" == "rhel" ] || [ "$OS" == "fedora" ]; then
+            yum install -y python3-venv
+        fi
+        python3 -m venv .venv || {
+            echo "ERROR: Failed to create virtual environment. Please install python3-venv manually."
+            echo "You can try: apt-get install python3-venv or yum install python3-venv"
+            exit 1
+        }
+    }
+fi
+
+# Activate the virtual environment
+echo "Activating virtual environment..."
+source .venv/bin/activate || {
+    echo "ERROR: Failed to activate virtual environment."
+    exit 1
+}
+
+# Upgrade pip within the virtual environment
+echo "Upgrading pip..."
+python -m pip install --upgrade pip
+
+# Install Python dependencies within the virtual environment
+echo "Installing Python dependencies in virtual environment..."
+pip install \
     prometheus-client \
     pandas \
     matplotlib \
     seaborn \
     numpy \
     scipy
+
+# Create a convenience script to activate the virtual environment for other scripts
+echo "Creating activation helper script..."
+cat > scripts/activate_venv.sh << 'EOF'
+#!/bin/bash
+# Helper script to activate the virtual environment
+# Source this script in other scripts that need Python dependencies:
+# source "$(dirname "$0")/activate_venv.sh"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(dirname "$SCRIPT_DIR")"
+VENV_PATH="$BASE_DIR/.venv"
+
+if [ ! -d "$VENV_PATH" ]; then
+    echo "ERROR: Virtual environment not found at $VENV_PATH"
+    echo "Please run ./scripts/setup.sh first to create the virtual environment."
+    return 1
+fi
+
+# Activate the virtual environment
+source "$VENV_PATH/bin/activate"
+echo "Python virtual environment activated."
+EOF
+
+chmod +x scripts/activate_venv.sh
+
+# Deactivate the virtual environment
+echo "Deactivating virtual environment..."
+deactivate
+
+echo "Python dependencies have been installed in a virtual environment."
+echo "To use these dependencies in other scripts, add: source \"$(dirname \"\$0\")/activate_venv.sh\""
+echo "at the beginning of your script."
 
 # Create default config file and detect existing devices
 echo "Creating configuration and detecting storage devices..."

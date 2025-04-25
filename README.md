@@ -28,7 +28,7 @@ git clone https://github.com/shahabafshar/Docker-FS-Benchmark.git
 cd Docker-FS-Benchmark
 
 # Provide the scripts with execution permission
-chmod +x ./scripts/*.sh
+find . -type f -name "*.sh" -exec chmod +x {} \;
 
 # Install dependencies and setup monitoring
 ./scripts/setup.sh
