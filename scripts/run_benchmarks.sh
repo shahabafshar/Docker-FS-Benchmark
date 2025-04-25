@@ -71,63 +71,36 @@ verify_device() {
 
 # Function to get device list from config and verify they exist
 get_devices() {
-    echo "DEBUG: Starting get_devices function"
-    
     local device_type=$1
     local devices=()
     
-    if [ "$DEBUG_MODE" = true ]; then
-        echo "DEBUG: Starting device search for type: $device_type"
-        echo "DEBUG: Reading from config file: $CONFIG_FILE"
-    fi
-    
     # Extract devices of the specified type from config file
     while IFS= read -r line; do
-        if [ "$DEBUG_MODE" = true ]; then
-            echo "DEBUG: Processing line: $line"
-        fi
-        
         # Skip comments and empty lines
         if [[ "$line" =~ ^#.*$ || -z "$line" ]]; then
-            [ "$DEBUG_MODE" = true ] && echo "DEBUG: Skipping comment/empty line"
             continue
         fi
         
         # Skip the SYSTEM_DISK line
         if [[ "$line" =~ ^SYSTEM_DISK= ]]; then
-            [ "$DEBUG_MODE" = true ] && echo "DEBUG: Skipping SYSTEM_DISK line"
             continue
         fi
         
         # Parse device entries
         if [[ "$line" =~ ^/dev/.*,$device_type, ]]; then
             device=$(echo "$line" | cut -d',' -f1)
-            [ "$DEBUG_MODE" = true ] && echo "DEBUG: Found matching device entry: $device"
             
             # Verify device exists
             if verify_device "$device"; then
                 devices+=("$device")
-                echo "Found $device_type device: $device"
-                [ "$DEBUG_MODE" = true ] && echo "DEBUG: Device verified and added to list"
-            else
-                echo "Skipping non-existent device: $device"
-                [ "$DEBUG_MODE" = true ] && echo "DEBUG: Device verification failed"
             fi
-        else
-            [ "$DEBUG_MODE" = true ] && echo "DEBUG: Line does not match device type $device_type"
         fi
     done < "$CONFIG_FILE"
     
     # Check if any devices were found
     if [ ${#devices[@]} -eq 0 ]; then
         echo "No valid $device_type devices found in configuration."
-        [ "$DEBUG_MODE" = true ] && echo "DEBUG: Empty device list, returning error"
         return 1
-    fi
-    
-    if [ "$DEBUG_MODE" = true ]; then
-        echo "DEBUG: Found ${#devices[@]} devices of type $device_type"
-        echo "DEBUG: Device list: ${devices[*]}"
     fi
     
     # Return devices as space-separated string
@@ -165,37 +138,107 @@ prepare_result_dir() {
     echo "$result_dir"
 }
 
-# Function to start monitoring stack
+# Function to start monitoring
 start_monitoring() {
     echo "Starting monitoring stack..."
     
-    # Navigate to Docker directory
     pushd "$DOCKER_DIR" > /dev/null
     
-    # Start the monitoring stack
-    docker-compose up -d
-    
-    # Wait for services to start
-    sleep 10
+    # Check if docker-compose is available
+    if command -v docker-compose &> /dev/null; then
+        echo "Using docker-compose to start monitoring..."
+        
+        # First attempt to start with Docker Compose
+        if docker-compose up -d; then
+            echo "Monitoring stack started successfully."
+        else
+            echo "Warning: First attempt to start monitoring with docker-compose failed."
+            echo "Cleaning up any partially started containers and trying again..."
+            
+            # Cleanup any partially started containers
+            docker-compose down 2>/dev/null || true
+            
+            # Second attempt after cleanup
+            echo "Making second attempt to start monitoring with docker-compose..."
+            if docker-compose up -d; then
+                echo "Monitoring stack started successfully on second attempt."
+            else
+                echo "Warning: Failed to start monitoring with docker-compose after retry."
+                echo "Falling back to simple monitoring script..."
+                
+                # Use our simple monitoring script instead
+                if [ -f "$SCRIPT_DIR/run_monitoring.sh" ]; then
+                    "$SCRIPT_DIR/run_monitoring.sh" stop 2>/dev/null || true
+                    "$SCRIPT_DIR/run_monitoring.sh" start
+                else
+                    echo "Error: Simple monitoring script not found at $SCRIPT_DIR/run_monitoring.sh"
+                    echo "Proceeding without monitoring. Results may be incomplete."
+                fi
+            fi
+        fi
+    else
+        echo "Docker Compose not found."
+        
+        # Try to start with simple monitoring script
+        if [ -f "$SCRIPT_DIR/run_monitoring.sh" ]; then
+            echo "Using simple monitoring script to start monitoring..."
+            "$SCRIPT_DIR/run_monitoring.sh" start
+        else
+            echo "Error: Simple monitoring script not found at $SCRIPT_DIR/run_monitoring.sh"
+            echo "Proceeding without monitoring. Results may be incomplete."
+        fi
+    fi
     
     popd > /dev/null
-    
-    echo "Monitoring stack started."
 }
 
-# Function to stop monitoring stack
+# Function to stop monitoring
 stop_monitoring() {
     echo "Stopping monitoring stack..."
     
-    # Navigate to Docker directory
     pushd "$DOCKER_DIR" > /dev/null
     
-    # Stop the monitoring stack
-    docker-compose down
+    # Check if docker-compose is available
+    if command -v docker-compose &> /dev/null; then
+        echo "Using docker-compose to stop monitoring..."
+        
+        # Attempt to stop with Docker Compose
+        if docker-compose down; then
+            echo "Monitoring stack stopped successfully."
+        else
+            echo "Warning: Failed to stop monitoring with docker-compose."
+            
+            # Fallback to simple monitoring script
+            if [ -f "$SCRIPT_DIR/run_monitoring.sh" ]; then
+                echo "Falling back to simple monitoring script to stop monitoring..."
+                "$SCRIPT_DIR/run_monitoring.sh" stop
+            else
+                echo "Error: Simple monitoring script not found at $SCRIPT_DIR/run_monitoring.sh"
+                echo "Attempting direct container removal as last resort..."
+                
+                # Direct container removal as last resort
+                docker rm -f node-exporter prometheus grafana 2>/dev/null || true
+                echo "Cleanup attempt completed. Some containers may still be running."
+            fi
+        fi
+    else
+        echo "Docker Compose not found."
+        
+        # Try to stop with simple monitoring script
+        if [ -f "$SCRIPT_DIR/run_monitoring.sh" ]; then
+            echo "Using simple monitoring script to stop monitoring..."
+            "$SCRIPT_DIR/run_monitoring.sh" stop
+        else
+            echo "Error: Simple monitoring script not found at $SCRIPT_DIR/run_monitoring.sh"
+            echo "Attempting direct container removal..."
+            
+            # Direct container removal as last resort
+            docker rm -f node-exporter prometheus grafana 2>/dev/null || true
+            echo "Cleanup attempt completed. Some containers may still be running."
+        fi
+    fi
     
     popd > /dev/null
-    
-    echo "Monitoring stack stopped."
 }
 
 # Function to run idle state baseline
@@ -205,7 +248,14 @@ run_idle_baseline() {
     # Skip the wait if in debug mode
     if [ "$DEBUG_MODE" = true ]; then
         echo "DEBUG MODE: Skipping 15-minute wait"
-        sleep 5  # Just wait 5 seconds for demonstration
+        # Start monitoring
+        start_monitoring
+        
+        # Sleep for 15 minutes
+        sleep 5
+        
+        # Stop monitoring
+        stop_monitoring
     else
         # Start monitoring
         start_monitoring
